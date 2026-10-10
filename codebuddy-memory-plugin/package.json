@@ -1,0 +1,12 @@
+{
+  "name": "openviking-memory-codebuddy-plugin",
+  "version": "0.1.2",
+  "description": "OpenViking memory plugin for the CodeBuddy Code CLI — semantic long-term memory",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/caozeal/openviking-codebuddy-plugin",
+  "scripts": {
+    "test": "node --test scripts/*.test.mjs"
+  },
+  "private": true
+}

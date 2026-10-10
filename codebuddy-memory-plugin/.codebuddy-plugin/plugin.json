@@ -1,0 +1,25 @@
+{
+  "name": "openviking-memory",
+  "version": "0.1.2",
+  "description": "Long-term semantic memory for the CodeBuddy Code CLI, powered by OpenViking. Injects relevant context at session start and on each prompt, and captures the conversation back into OpenViking.",
+  "author": {
+    "name": "caozeal",
+    "url": "https://github.com/caozeal"
+  },
+  "contributors": [
+    {
+      "name": "OpenViking",
+      "url": "https://github.com/volcengine/OpenViking"
+    }
+  ],
+  "repository": "https://github.com/caozeal/openviking-codebuddy-plugin",
+  "license": "Apache-2.0",
+  "keywords": [
+    "memory",
+    "openviking",
+    "semantic-search",
+    "long-term-memory",
+    "context-engine",
+    "codebuddy"
+  ]
+}
