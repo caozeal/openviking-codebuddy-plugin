@@ -194,3 +194,78 @@ test("a healthy server that recalls nothing still returns a well-formed response
     rmSync(box.dir, { recursive: true, force: true });
   }
 });
+
+// The server serves an Experience as a self-closing `detail="uri"` tag because
+// Experience files have no `abstract` scalar (measured 2026-10-10). A URI-only
+// entry is useless as context, so the hook inlines the body itself.
+const EXPERIENCE_URI = "viking://user/default/memories/experiences/foo.md";
+const EXPERIENCE_BODY = "## Situation\n- 这是补读到的经验正文。";
+
+/** Mock a server that serves one URI-only Experience and can read its body. */
+function experienceServer(extra = {}) {
+  return async (req, res) => {
+    const { pathname } = new URL(req.url, "http://127.0.0.1");
+    if (pathname === "/health") return writeJson(res, { status: "ok" });
+    if (pathname === "/api/v1/system/status") return writeJson(res, { status: "ok", result: {} });
+    if (pathname === "/api/v1/content/read") return writeJson(res, { status: "ok", result: EXPERIENCE_BODY });
+    if (pathname.startsWith("/api/v1/search/")) {
+      return writeJson(res, {
+        status: "ok",
+        result: {
+          rendered: `<memory uri="${EXPERIENCE_URI}" type="experiences" score="0.9" detail="uri" />`,
+          entries: [{ uri: EXPERIENCE_URI, category: "experiences", detail: "uri", score: 0.9, text: "" }],
+          digest: "",
+          ...extra,
+        },
+      });
+    }
+    return writeJson(res, { status: "ok", result: {} });
+  };
+}
+
+test("a URI-only Experience entry is hydrated with its body", async () => {
+  const box = sandbox();
+  try {
+    await withMockOpenViking(experienceServer(), async (url) => {
+      const r = await runHookScript(ENTRY, {
+        input: promptPayload("一个足够长的问题看看会不会召回什么"),
+        env: { ...box.env, OPENVIKING_URL: url },
+      });
+      assert.equal(r.code, 0, `hook must exit 0 (stderr: ${r.stderr})`);
+      const ctx = envelope(r.stdout)?.hookSpecificOutput?.additionalContext || "";
+      assert.ok(
+        ctx.includes("这是补读到的经验正文"),
+        `experience body must be inlined; got: ${ctx.slice(0, 300)}`,
+      );
+      assert.ok(
+        !/detail="uri"\s*\/>/.test(ctx),
+        "the URI-only self-closing tag must be replaced by an open/close pair",
+      );
+    });
+  } finally {
+    rmSync(box.dir, { recursive: true, force: true });
+  }
+});
+
+test("hydration can be turned off by the environment", async () => {
+  const box = sandbox();
+  let readHits = 0;
+  try {
+    await withMockOpenViking(async (req, res) => {
+      const { pathname } = new URL(req.url, "http://127.0.0.1");
+      if (pathname === "/api/v1/content/read") readHits++;
+      return experienceServer()(req, res);
+    }, async (url) => {
+      const r = await runHookScript(ENTRY, {
+        input: promptPayload("一个足够长的问题看看会不会召回什么"),
+        env: { ...box.env, OPENVIKING_URL: url, OPENVIKING_RECALL_HYDRATE_EXPERIENCES: "0" },
+      });
+      assert.equal(r.code, 0, `hook must exit 0 (stderr: ${r.stderr})`);
+      const ctx = envelope(r.stdout)?.hookSpecificOutput?.additionalContext || "";
+      assert.ok(!ctx.includes("这是补读到的经验正文"), "hydration is off, the body must not be inlined");
+    });
+    assert.equal(readHits, 0, "no content read may be issued when hydration is off");
+  } finally {
+    rmSync(box.dir, { recursive: true, force: true });
+  }
+});

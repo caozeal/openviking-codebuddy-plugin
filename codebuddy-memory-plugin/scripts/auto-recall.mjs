@@ -63,6 +63,81 @@ async function recall(cfg, query, peer, sessionId) {
 }
 
 // ---------------------------------------------------------------------------
+// Experience hydration
+// ---------------------------------------------------------------------------
+//
+// The server's context face renders an Experience as a self-closing
+// `<memory ... type="experiences" ... detail="uri" />`: Experience files carry
+// no `abstract` scalar — their body lives in the Situation/Approach/Reflect
+// sections — so the assembler has nothing to serve at the abstract tier and
+// degrades the entry to a bare URI. The server ignores `detail` overrides for
+// this category, so a URI-only Experience reaches the model with no content at
+// all: it would have to issue its own read, which in practice never happens
+// (measured 2026-10-10: 0 read records across 7 experiences, while the same
+// entries ranked first by score). Read the body here and inline it.
+const EXPERIENCE_TAG_RE = /<memory\b[^>]*\btype="experiences"[^>]*\/>/g;
+const HYDRATE_MAX_ENTRIES = 3;
+const HYDRATE_MAX_CHARS = 800;
+const HYDRATE_TOTAL_CHARS = 1200;
+
+/** Body for one Experience URI, or "" when the read fails or is unavailable. */
+async function readExperienceBody(uri, actorPeerId) {
+  try {
+    const res = await fetchJSON(
+      `/api/v1/content/read?uri=${encodeURIComponent(uri)}`,
+      {},
+      { actorPeerId },
+    );
+    return res.ok && typeof res.result === "string" ? res.result.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Inline the body of URI-only Experience entries in a server-assembled block.
+ *
+ * Only self-closing Experience tags are touched; entries the server already
+ * served with an overview/abstract/full body are left alone. Each body is
+ * capped and the total inlined text is capped, so a large Experience cannot
+ * blow past the recall budget the server just spent. Any failure returns the
+ * original block unchanged — recall must never degrade into an error.
+ */
+async function hydrateUriOnlyExperiences(block, cfg, actorPeerId) {
+  if (!block || process.env.OPENVIKING_RECALL_HYDRATE_EXPERIENCES === "0") return block;
+
+  const targets = (block.match(EXPERIENCE_TAG_RE) || [])
+    .filter((tag) => !/\bdetail="(abstract|overview|full)"/.test(tag))
+    .slice(0, HYDRATE_MAX_ENTRIES);
+  if (!targets.length) return block;
+
+  const perEntry = Math.min(Math.max(200, Number(cfg.recallMaxContentChars || 500)), HYDRATE_MAX_CHARS);
+  const bodies = await Promise.all(targets.map((tag) => {
+    const uri = tag.match(/\buri="([^"]*)"/)?.[1];
+    return uri ? readExperienceBody(uri, actorPeerId) : Promise.resolve("");
+  }));
+
+  let out = block;
+  let inlined = 0;
+  let hydrated = 0;
+  for (let i = 0; i < targets.length; i += 1) {
+    const room = HYDRATE_TOTAL_CHARS - inlined;
+    if (room <= 0) break;
+    let body = bodies[i];
+    if (!body) continue;
+    const cap = Math.min(perEntry, room);
+    if (body.length > cap) body = `${body.slice(0, cap)}...`;
+    const open = targets[i].replace(/\s*\/>\s*$/, ">").replace(/\bdetail="uri"/, 'detail="full"');
+    out = out.replace(targets[i], `${open}\n${body}\n</memory>`);
+    inlined += body.length;
+    hydrated += 1;
+  }
+
+  if (hydrated) log("recall_experience_hydrated", { uriOnly: targets.length, hydrated, chars: inlined });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -146,6 +221,8 @@ runHookStage({
     return;
   }
 
+  const block = await hydrateUriOnlyExperiences(recalled.block, cfg, effectivePeer.peerId);
+
   writeRecallState({
     // A server-assembled block is one rendered unit whatever it holds, so the
     // count comes from the URIs it cites.
@@ -159,5 +236,5 @@ runHookStage({
     cb_session_id: sessionId,
     reason: "ok",
   });
-  return recalled.block;
+  return block;
 }).catch((err) => { logError("uncaught", err); approve(); });
