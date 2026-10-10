@@ -1,5 +1,7 @@
 # openviking-codebuddy-plugin
 
+[English](README.md) / 中文
+
 为 [CodeBuddy Code](https://cnb.cool/codebuddy/codebuddy-code) CLI 提供长期语义记忆，由
 [OpenViking](https://github.com/volcengine/OpenViking) 驱动。
 
